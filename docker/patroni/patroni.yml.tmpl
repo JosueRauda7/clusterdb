@@ -1,0 +1,94 @@
+scope: clusterdb
+namespace: /clusterdb/
+name: ${PATRONI_NAME}
+
+log:
+  level: INFO
+  format: "%(asctime)s %(levelname)s %(message)s"
+
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: ${PATRONI_RESTAPI_CONNECT_ADDRESS}
+
+etcd3:
+  hosts:
+    - etcd1:2379
+    - etcd2:2379
+    - etcd3:2379
+  protocol: http
+
+bootstrap:
+  dcs:
+    # TTL relativamente corto para una demo local: detección ~10-20 s.
+    # El quórum de etcd es lo que impide que el antiguo Master siga
+    # escribiendo sin coordinación (protección contra split-brain).
+    ttl: 20
+    loop_wait: 5
+    retry_timeout: 5
+    maximum_lag_on_failover: 1048576
+    synchronous_mode: true
+    synchronous_mode_strict: false
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      remove_data_directory_on_rewind_failure: true
+      parameters:
+        max_connections: 60
+        shared_buffers: 128MB
+        effective_cache_size: 512MB
+        work_mem: 4MB
+        maintenance_work_mem: 64MB
+        wal_level: replica
+        wal_log_hints: "on"
+        hot_standby: "on"
+        hot_standby_feedback: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_keep_size: 256MB
+        max_slot_wal_keep_size: 1GB
+        max_wal_size: 512MB
+        min_wal_size: 128MB
+        checkpoint_timeout: 10min
+        synchronous_commit: "on"
+        random_page_cost: 1.1
+        log_min_duration_statement: 1000
+        log_line_prefix: "%m [%p] %q%u@%d "
+        timezone: UTC
+        log_timezone: UTC
+        unix_socket_directories: /var/run/postgresql
+        password_encryption: scram-sha-256
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - local all all trust
+    - host all all 0.0.0.0/0 scram-sha-256
+    - host replication replicator 0.0.0.0/0 scram-sha-256
+  post_bootstrap: /usr/local/bin/bootstrap-db.sh
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: ${PATRONI_POSTGRESQL_CONNECT_ADDRESS}
+  data_dir: /var/lib/postgresql/data/pgdata
+  bin_dir: /usr/lib/postgresql/16/bin
+  pgpass: /tmp/pgpass
+  use_unix_socket: true
+  authentication:
+    superuser:
+      username: postgres
+      password: "${POSTGRES_PASSWORD}"
+    replication:
+      username: replicator
+      password: "${REPLICATOR_PASSWORD}"
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    max-rate: "50M"
+  tags:
+    nofailover: false
+    noloadbalance: false
+    clonefrom: false
+    nosync: false
+    failover_priority: ${PATRONI_FAILOVER_PRIORITY}

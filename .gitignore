@@ -1,0 +1,24 @@
+# Secretos locales
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Datos locales / salidas de scripts
+backups/
+*.dump
+*.log
+tmp/
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

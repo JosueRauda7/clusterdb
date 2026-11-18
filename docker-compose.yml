@@ -1,0 +1,496 @@
+name: clusterdb-monitor
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-common-env: &common-env
+  TZ: ${TZ:-America/El_Salvador}
+
+x-python-service: &python-service
+  restart: unless-stopped
+  init: true
+  networks:
+    - clusterdb-net
+  logging: *default-logging
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  # ==========================================================
+  # QUÓRUM: 3 miembros de etcd (tolerancia a 1 fallo)
+  # ==========================================================
+  etcd1:
+    image: quay.io/coreos/etcd:v3.5.17
+    container_name: clusterdb-etcd1
+    hostname: etcd1
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd1:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=clusterdb-etcd-token
+      - --initial-cluster-state=new
+      - --quota-backend-bytes=67108864
+      - --auto-compaction-mode=periodic
+      - --auto-compaction-retention=1h
+      - --logger=zap
+      - --log-level=warn
+    environment:
+      ETCDCTL_API: "3"
+      TZ: ${TZ:-America/El_Salvador}
+    volumes:
+      - etcd1-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
+    networks:
+      - clusterdb-net
+    logging: *default-logging
+
+  etcd2:
+    image: quay.io/coreos/etcd:v3.5.17
+    container_name: clusterdb-etcd2
+    hostname: etcd2
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd2
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd2:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd2:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=clusterdb-etcd-token
+      - --initial-cluster-state=new
+      - --quota-backend-bytes=67108864
+      - --auto-compaction-mode=periodic
+      - --auto-compaction-retention=1h
+      - --logger=zap
+      - --log-level=warn
+    environment:
+      ETCDCTL_API: "3"
+      TZ: ${TZ:-America/El_Salvador}
+    volumes:
+      - etcd2-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
+    networks:
+      - clusterdb-net
+    logging: *default-logging
+
+  etcd3:
+    image: quay.io/coreos/etcd:v3.5.17
+    container_name: clusterdb-etcd3
+    hostname: etcd3
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=etcd3
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd3:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://etcd3:2380
+      - --initial-cluster=etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380
+      - --initial-cluster-token=clusterdb-etcd-token
+      - --initial-cluster-state=new
+      - --quota-backend-bytes=67108864
+      - --auto-compaction-mode=periodic
+      - --auto-compaction-retention=1h
+      - --logger=zap
+      - --log-level=warn
+    environment:
+      ETCDCTL_API: "3"
+      TZ: ${TZ:-America/El_Salvador}
+    volumes:
+      - etcd3-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 192M
+    networks:
+      - clusterdb-net
+    logging: *default-logging
+
+  # ==========================================================
+  # NODOS POSTGRESQL ADMINISTRADOS POR PATRONI
+  # ==========================================================
+  postgres-master:
+    build:
+      context: ./docker/patroni
+      dockerfile: Dockerfile
+    image: clusterdb/patroni:16.4-4.1.5
+    container_name: clusterdb-postgres-master
+    hostname: postgres-master
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: 256mb
+    environment:
+      <<: *common-env
+      PATRONI_NAME: postgres-master
+      PATRONI_RESTAPI_CONNECT_ADDRESS: postgres-master:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: postgres-master:5432
+      PATRONI_FAILOVER_PRIORITY: "100"
+      PATRONI_BOOTSTRAP_ENABLED: "true"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clusterdb_local_superuser_change_me}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD:-clusterdb_local_replicator_change_me}
+      APP_PASSWORD: ${APP_PASSWORD:-clusterdb_local_app_change_me}
+      BACKUP_PASSWORD: ${BACKUP_PASSWORD:-clusterdb_local_backup_change_me}
+      MONITOR_PASSWORD: ${MONITOR_PASSWORD:-clusterdb_local_monitor_change_me}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pg-master-data:/var/lib/postgresql/data
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.20"
+          memory: 1G
+    networks:
+      - clusterdb-net
+    logging: *default-logging
+
+  postgres-replica:
+    # Reutiliza la imagen construida una sola vez por postgres-master.
+    image: clusterdb/patroni:16.4-4.1.5
+    container_name: clusterdb-postgres-replica
+    hostname: postgres-replica
+    restart: unless-stopped
+    stop_grace_period: 30s
+    shm_size: 256mb
+    environment:
+      <<: *common-env
+      PATRONI_NAME: postgres-replica
+      PATRONI_RESTAPI_CONNECT_ADDRESS: postgres-replica:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: postgres-replica:5432
+      PATRONI_FAILOVER_PRIORITY: "10"
+      PATRONI_BOOTSTRAP_ENABLED: "false"
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clusterdb_local_superuser_change_me}
+      REPLICATOR_PASSWORD: ${REPLICATOR_PASSWORD:-clusterdb_local_replicator_change_me}
+      APP_PASSWORD: ${APP_PASSWORD:-clusterdb_local_app_change_me}
+      BACKUP_PASSWORD: ${BACKUP_PASSWORD:-clusterdb_local_backup_change_me}
+      MONITOR_PASSWORD: ${MONITOR_PASSWORD:-clusterdb_local_monitor_change_me}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pg-replica-data:/var/lib/postgresql/data
+    depends_on:
+      etcd1:
+        condition: service_healthy
+      etcd2:
+        condition: service_healthy
+      etcd3:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
+    networks:
+      - clusterdb-net
+    logging: *default-logging
+
+  # ==========================================================
+  # PUNTO ÚNICO DE CONEXIÓN
+  # ==========================================================
+  haproxy:
+    image: haproxy:2.9.9-alpine
+    container_name: clusterdb-haproxy
+    hostname: haproxy
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-America/El_Salvador}
+    ports:
+      - "127.0.0.1:15432:5432"
+      - "127.0.0.1:7000:7000"
+    volumes:
+      - ./docker/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      postgres-master:
+        condition: service_started
+      postgres-replica:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 128M
+    networks:
+      - clusterdb-net
+      - clusterdb-edge
+    logging: *default-logging
+
+  # ==========================================================
+  # RESPALDOS (independiente de la replicación)
+  # ==========================================================
+  postgres-backup:
+    build:
+      context: ./backup
+      dockerfile: Dockerfile
+    image: clusterdb/backup:16.4
+    container_name: clusterdb-postgres-backup
+    hostname: postgres-backup
+    <<: *python-service
+    stop_grace_period: 30s
+    environment:
+      <<: *common-env
+      PGHOST: haproxy
+      PGPORT: "5432"
+      PGDATABASE: cluster_demo
+      PGUSER: backup
+      PGPASSWORD: ${BACKUP_PASSWORD:-clusterdb_local_backup_change_me}
+      BACKUP_DIR: /backups
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-6}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-14}
+      BACKUP_ON_START: ${BACKUP_ON_START:-true}
+      BACKUP_ON_START_DELAY_SECONDS: ${BACKUP_ON_START_DELAY_SECONDS:-25}
+      ALLOW_RESTORE: ${ALLOW_RESTORE:-false}
+      RETENTION_TEMP_DATABASES: "2"
+    volumes:
+      - backup-data:/backups
+    depends_on:
+      haproxy:
+        condition: service_started
+      postgres-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    logging: *default-logging
+
+  # ==========================================================
+  # MONITOREO Y MÉTRICAS (SQLite persistente)
+  # ==========================================================
+  monitor:
+    build:
+      context: ./monitor
+      dockerfile: Dockerfile
+    image: clusterdb/monitor:1.0
+    container_name: clusterdb-monitor
+    hostname: monitor
+    <<: *python-service
+    environment:
+      <<: *common-env
+      DB_HOST: haproxy
+      DB_PORT: "5432"
+      DB_NAME: cluster_demo
+      DB_USER: monitor
+      DB_PASSWORD: ${MONITOR_PASSWORD:-clusterdb_local_monitor_change_me}
+      DB_APP_USER: app
+      PATRONI_MASTER_URL: http://postgres-master:8008
+      PATRONI_REPLICA_URL: http://postgres-replica:8008
+      NODE_HOSTS: postgres-master,postgres-replica
+      BACKUP_URL: http://postgres-backup:8080
+      MONITOR_DB_PATH: /data/monitor.db
+      MONITOR_POLL_SECONDS: ${MONITOR_POLL_SECONDS:-2}
+      MONITOR_RETENTION_DAYS: ${MONITOR_RETENTION_DAYS:-30}
+      REPLICATION_LAG_ALERT_BYTES: ${REPLICATION_LAG_ALERT_BYTES:-5242880}
+      FAILURE_THRESHOLD_SAMPLES: ${FAILURE_THRESHOLD_SAMPLES:-1}
+      GENERATOR_STATS_PATH: /generator-data/stats.json
+      GENERATOR_ATTEMPTS_PATH: /generator-data/attempts.jsonl
+      SLA_TARGET_PERCENT: ${SLA_TARGET_PERCENT:-99.9}
+      RTO_TARGET_SECONDS: ${RTO_TARGET_SECONDS:-30}
+      RPO_TARGET_SECONDS: ${RPO_TARGET_SECONDS:-60}
+      ALLOW_RESTORE: ${ALLOW_RESTORE:-false}
+    volumes:
+      - monitor-data:/data
+      - generator-data:/generator-data:ro
+    depends_on:
+      haproxy:
+        condition: service_started
+      postgres-master:
+        condition: service_started
+      postgres-replica:
+        condition: service_started
+      postgres-backup:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.60"
+          memory: 320M
+    logging: *default-logging
+
+  # ==========================================================
+  # GENERADOR DE TRANSACCIONES (idempotente)
+  # ==========================================================
+  txgen:
+    build:
+      context: ./txgen
+      dockerfile: Dockerfile
+    image: clusterdb/txgen:1.0
+    container_name: clusterdb-txgen
+    hostname: txgen
+    <<: *python-service
+    environment:
+      <<: *common-env
+      DB_HOST: haproxy
+      DB_PORT: "5432"
+      DB_NAME: cluster_demo
+      DB_USER: app
+      DB_PASSWORD: ${APP_PASSWORD:-clusterdb_local_app_change_me}
+      TX_INTERVAL_SECONDS: ${TX_INTERVAL_SECONDS:-2}
+      TX_MAX_BACKOFF_SECONDS: "2"
+      DATA_DIR: /data
+    volumes:
+      - generator-data:/data
+    depends_on:
+      haproxy:
+        condition: service_started
+      postgres-master:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,time; d=json.load(open('/data/stats.json')); assert time.time() - d.get('updated_epoch', 0) < 60"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: 160M
+    logging: *default-logging
+
+  # ==========================================================
+  # DASHBOARD
+  # ==========================================================
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    image: clusterdb/dashboard:1.0
+    container_name: clusterdb-dashboard
+    hostname: dashboard
+    <<: *python-service
+    environment:
+      <<: *common-env
+      MONITOR_URL: http://monitor:8000
+      DASHBOARD_REFRESH_SECONDS: ${DASHBOARD_REFRESH_SECONDS:-5}
+      SLA_TARGET_PERCENT: ${SLA_TARGET_PERCENT:-99.9}
+      RTO_TARGET_SECONDS: ${RTO_TARGET_SECONDS:-30}
+      RPO_TARGET_SECONDS: ${RPO_TARGET_SECONDS:-60}
+      ALLOW_RESTORE: ${ALLOW_RESTORE:-false}
+    ports:
+      - "127.0.0.1:8501:8501"
+    networks:
+      - clusterdb-net
+      - clusterdb-edge
+    depends_on:
+      monitor:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 512M
+    logging: *default-logging
+
+networks:
+  clusterdb-net:
+    name: clusterdb-net
+    driver: bridge
+    # Red aislada: en la exposición no se necesita Internet.
+    internal: true
+  clusterdb-edge:
+    name: clusterdb-edge
+    driver: bridge
+    # Solo HAProxy y el dashboard se conectan aquí para publicar puertos en
+    # 127.0.0.1. Docker Desktop no publica puertos de contenedores conectados
+    # únicamente a una red interna. El plano de datos sigue aislado en
+    # clusterdb-net; el resto de contenedores no tiene salida exterior.
+
+volumes:
+  etcd1-data:
+    name: clusterdb-etcd1-data
+  etcd2-data:
+    name: clusterdb-etcd2-data
+  etcd3-data:
+    name: clusterdb-etcd3-data
+  pg-master-data:
+    name: clusterdb-pg-master-data
+  pg-replica-data:
+    name: clusterdb-pg-replica-data
+  backup-data:
+    name: clusterdb-backup-data
+  monitor-data:
+    name: clusterdb-monitor-data
+  generator-data:
+    name: clusterdb-generator-data

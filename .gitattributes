@@ -1,0 +1,33 @@
+# Normalización de finales de línea para que el repo se comporte igual en
+# Windows, Linux, WSL y GitHub Actions.
+* text=auto
+
+# Archivos que deben conservar LF (se ejecutan o se leen dentro de Linux)
+*.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.sql text eol=lf
+*.tmpl text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.env.example text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+
+# PowerShell usa CRLF en Windows
+*.ps1 text eol=crlf
+
+# Archivos generados o binarios (nunca normalizar)
+*.dump binary
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
